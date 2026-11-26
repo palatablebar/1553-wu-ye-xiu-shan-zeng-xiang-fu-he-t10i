@@ -9,6 +9,7 @@ from flask.views import MethodView
 from werkzeug.exceptions import BadRequest, UnsupportedMediaType, RequestEntityTooLarge
 
 from .pipeline import DISPLAY, MODULES, execute, open_fixture, preview
+from .survey_budget.contracts import JOINT_MODES, is_joint_mode
 
 app=Flask(__name__,static_folder='web/static',template_folder='web/templates')
 app.config['MAX_CONTENT_LENGTH']=1500000
@@ -16,7 +17,9 @@ app.json.sort_keys=False
 
 
 def limits(capacity=12,strategy='balanced'):
-    if type(capacity)!=int or capacity not in range(1,61) or strategy not in ('balanced','focus'):
+    if type(capacity)!=int or capacity not in range(1,61):
+        raise ValueError('请检查额度和派单选项')
+    if strategy not in ('balanced','focus') and not is_joint_mode(strategy):
         raise ValueError('请检查额度和派单选项')
     return SimpleNamespace(capacity=capacity,strategy=strategy)
 

@@ -104,3 +104,27 @@ def boundary_diagnostics(checks, threshold):
     return {'临界判断':'增项核减', '实绩超线':sum(label for _,label in points),
             '估计超线':sum(pred for pred,_ in points), '额外复测':sum(p and not y for p,y in points),
             '漏查':sum(y and not p for p,y in points)}
+
+
+# 同区同日误差关联 / 联合漏审风险内核的近义导出（实现位于 survey_budget.joint_risk）。
+from ..survey_budget.joint_risk import (  # noqa: E402
+    error_correlation, estimate_error_correlation, residual_correlation,
+    error_association, paired_errors, pearson_association,
+    intraclass_association, build_links, association_from_replay,
+    pair_joint_risk, cohort_double_miss_risk, joint_miss_risk,
+    label_is_mature, filter_mature_labels,
+)
+
+# 回放误差关联的近义命名。
+replay_error_correlation = error_correlation
+same_day_error_correlation = error_correlation
+cohort_error_correlations = build_links
+residual_correlation_from_replay = error_correlation
+joint_error_association = build_links
+
+
+def __getattr__(name):
+    if name.startswith('__'):
+        raise AttributeError(name)
+    from ..survey_budget import _compat
+    return _compat.resolve(name, globals())

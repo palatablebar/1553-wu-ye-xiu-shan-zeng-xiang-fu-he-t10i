@@ -1,4 +1,5 @@
 from dataclasses import replace
+from types import SimpleNamespace
 import json
 from pathlib import Path
 
@@ -9,6 +10,8 @@ from .change_scorecard import service as model_service
 from .addendum_replay import service as calibration_service
 from .building_portfolio import service as monitor_service
 from .survey_budget import service as dispatch_service
+from .survey_budget.contracts import is_joint_mode
+from .survey_budget import joint_risk
 from .price_evidence import service as audit_service
 from .approval_dates import contracts as window_contract
 
@@ -105,7 +108,8 @@ def calibrate_cell(source, oversight):
     return parameters,verified,output
 
 
-def execute(documents, capacity=12, mode='balanced', *, as_of=96):
+def execute(documents, capacity=12, mode=None, *, as_of=96, strategy=None, **options):
+    mode = mode or strategy or 'balanced'
     intake, windows, state = worksheet(documents,as_of)
     features = feature_service.transform_windows(windows,state)
     kernel, fitted_calibration, (recent, shift) = calibrate_cell(features, state)
@@ -114,8 +118,29 @@ def execute(documents, capacity=12, mode='balanced', *, as_of=96):
     previous=monitor_service.fit_baseline(features.train,state.fingerprint)
     drift=monitor_service.scan_current(previous,features.live,state.fingerprint)
     coverage=monitor_service.coverage_by_group(features.calibration,features.live)
-    allocation=dispatch_service.plan_jobs(checked_live,drift.domain,capacity,mode)
-    closed=audit_service.close_batch(documents,intake,windows,allocation,state.fingerprint,kernel.name,mode)
+    joint = is_joint_mode(mode)
+    # 用回放窗同区同日实绩估计误差关联；result_day 晚于截止日的标签不纳入。
+    result_info = {row.key: (row.result_day, row.received) for row in windows.replay}
+    replay_points = []
+    for point in evaluated:
+        result_day, received = result_info.get(point.raw.key, (None, None))
+        replay_points.append(SimpleNamespace(
+            key=point.raw.key, cohort=point.raw.cohort, day=point.raw.day,
+            estimate=point.estimate, score=point.raw.score,
+            outcome=point.raw.outcome, observed=point.raw.observed,
+            result_day=result_day, received=received))
+    joint_links = joint_risk.build_links(
+        replay_points, targets=checked_live, as_of=as_of,
+        use_received_batches=True)
+    if joint:
+        allocation=dispatch_service.plan_jobs(
+            checked_live,drift.domain,capacity,mode,
+            links=joint_links,as_of=as_of)
+    else:
+        allocation=dispatch_service.plan_jobs(checked_live,drift.domain,capacity,mode)
+    signed_risk=audit_service.recompute_signed_risk(allocation,links=joint_links)
+    closed=audit_service.close_batch(documents,intake,windows,allocation,state.fingerprint,kernel.name,mode,
+                                    links=joint_links,signed_risk=signed_risk)
     performance=calibration_service.performance(evaluated)
     states = dict(closed.totals.states)
     overview = [
@@ -160,10 +185,23 @@ def execute(documents, capacity=12, mode='balanced', *, as_of=96):
         row['joint_experiments'] = feature_service.render_joint_experiments(current,state,estimate)
     details[7]['records'].extend(audit_service.site_checklist(row_list))
     details[7]['records'].extend(audit_service.intervention_summary(row_list))
+    details[7]['signed_risk'] = signed_risk
+    if joint:
+        link_rows = tuple(
+            {'作业区': cohort, '支持': link.status, '关联系数': round(link.rho, 4),
+             '成组': link.pairs, '样本': link.samples, '来源': '、'.join(link.source)}
+            for cohort, link in sorted(joint_links.items()))
+        details[6]['joint_links'] = link_rows
+        details[6]['records'].extend(link_rows)
+        details[7]['records'].extend(audit_service.miss_risk_evidence(allocation, links=joint_links))
     overview_report = {'capacity' : capacity, 'mode': mode, 'as_of': as_of, 'sample_hash': closed.batch_hash,
               'policy_hash': closed.policy_hash, 'feature_stamp': state.fingerprint,
               'model': kernel.name, 'run_id': closed.stamp, 'object_name': DISPLAY['object_name'],
               'unit': DISPLAY['unit'], 'sections': details, 'flow_counts': list(states.items()),
+              'signed_risk': signed_risk,
+              'joint_links': {c: {'status': l.status, 'rho': round(l.rho, 6),
+                                  'pairs': l.pairs, 'samples': l.samples}
+                              for c, l in sorted(joint_links.items())},
               'measures': {'extra_pct': ('增项金额占比', '%'),
  'revisions': ('工程量签单修订', '次'),
  'photos': ('抽验影像证据', '张'),
@@ -173,6 +211,7 @@ def execute(documents, capacity=12, mode='balanced', *, as_of=96):
     return overview_report
 
 
-def preview(capacity=12, mode='balanced'):
+def preview(capacity=12, mode=None, *, strategy=None, **options):
+    mode = mode or strategy or 'balanced'
     fixture = open_fixture()
     return execute(fixture['records'], capacity, mode, as_of=fixture['as_of'])
