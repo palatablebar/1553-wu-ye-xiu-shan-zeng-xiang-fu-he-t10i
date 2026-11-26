@@ -1,0 +1,24 @@
+{
+  "key": "SC-1101",
+  "cohort": "公寓区",
+  "day": 2,
+  "received": 3,
+  "revision": 1,
+  "result_day": 5,
+  "outcome": 1.0,
+  "observed": true,
+  "form": {
+    "增项结算": {
+      "scope_diff_basis_points": 8000,
+      "rewrites": 12
+    },
+    "工程量签证": {
+      "inspection_photos": 34,
+      "quote_age_hours": 1536
+    },
+    "复核证据": {
+      "changed_operations": 28,
+      "vendor_respond_minutes": 2880
+    }
+  }
+}
